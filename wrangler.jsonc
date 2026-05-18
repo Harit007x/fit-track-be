@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fit-track-be",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fittrack-db",
+      "database_id": "4a466804-25c8-4c0f-9af1-00cf78751eb8",
+      "migrations_dir": "prisma/migrations",
+      "remote": true
+    }
+  ]
+}

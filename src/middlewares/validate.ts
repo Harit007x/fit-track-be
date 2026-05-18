@@ -1,20 +1,32 @@
-import { Request, Response, NextFunction } from "express";
+import { Context, Next } from "hono";
 import { ZodTypeAny, ZodError } from "zod";
 
 export const validate = (schema: ZodTypeAny) => {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (c: Context, next: Next) => {
     try {
+      let body = {};
+      if (c.req.header("content-type")?.includes("application/json")) {
+        body = await c.req.json().catch(() => ({}));
+      }
+
       await schema.parseAsync({
-        body: req.body,
-        query: req.query,
-        params: req.params,
+        body,
+        query: c.req.query(),
+        params: c.req.param(),
       });
-      return next();
+      await next();
     } catch (error) {
       if (error instanceof ZodError) {
-        return next(error);
+        return c.json(
+          {
+            success: false,
+            message: "Validation Error",
+            errors: error.issues,
+          },
+          400
+        );
       }
-      return next(error);
+      return c.json({ success: false, message: "Invalid Request" }, 400);
     }
   };
 };

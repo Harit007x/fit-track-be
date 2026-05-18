@@ -1,8 +1,7 @@
-import { Request, Response } from "express";
-import { prisma } from "../utils/db";
+import { Context } from "hono";
+import { getPrisma, Env } from "../utils/db";
 import { z } from "zod";
 
-// Validation Schemas
 export const upsertMetricSchema = z.object({
   body: z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
@@ -21,12 +20,13 @@ export const getHistorySchema = z.object({
   }),
 });
 
-// Controllers
-const upsertMetric = async (req: Request, res: Response): Promise<void> => {
+const upsertMetric = async (c: Context<{ Bindings: Env; Variables: { user: any } }>) => {
   try {
-    const userId = (req as any).user.id;
-    const { date, ...metrics } = req.body;
+    const userId = c.get("user").id;
+    const { date, ...metrics } = await c.req.json();
+    const prisma = getPrisma(c.env);
 
+    // In SQLite, composite unique where is structured identical to standard prisma
     const metric = await prisma.dailyMetric.upsert({
       where: {
         userId_date: {
@@ -42,42 +42,46 @@ const upsertMetric = async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    res.status(200).json({ success: true, data: metric });
+    return c.json({ success: true, data: metric });
   } catch (error) {
     console.error("Upsert Metric Error:", error);
-    res.status(500).json({ success: false, message: "Failed to update metrics" });
+    return c.json({ success: false, message: "Failed to update metrics" }, 500);
   }
 };
 
-const getHistory = async (req: Request, res: Response): Promise<void> => {
+const getHistory = async (c: Context<{ Bindings: Env; Variables: { user: any } }>) => {
   try {
-    const userId = (req as any).user.id;
-    const { startDate, endDate } = req.query;
+    const userId = c.get("user").id;
+    const { startDate, endDate } = c.req.query();
+    const prisma = getPrisma(c.env);
 
     const metrics = await prisma.dailyMetric.findMany({
       where: {
         userId,
-        date: {
-          gte: startDate as string,
-          lte: endDate as string,
-        },
+        ...(startDate && endDate ? {
+          date: {
+            gte: startDate,
+            lte: endDate,
+          },
+        } : {}),
       },
       orderBy: {
         date: "asc",
       },
     });
 
-    res.status(200).json({ success: true, data: metrics });
+    return c.json({ success: true, data: metrics });
   } catch (error) {
     console.error("Get History Error:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch history" });
+    return c.json({ success: false, message: "Failed to fetch history" }, 500);
   }
 };
 
-const getTodayMetric = async (req: Request, res: Response): Promise<void> => {
+const getTodayMetric = async (c: Context<{ Bindings: Env; Variables: { user: any } }>) => {
   try {
-    const userId = (req as any).user.id;
+    const userId = c.get("user").id;
     const today = new Date().toISOString().split("T")[0];
+    const prisma = getPrisma(c.env);
 
     const metric = await prisma.dailyMetric.findUnique({
       where: {
@@ -88,10 +92,10 @@ const getTodayMetric = async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    res.status(200).json({ success: true, data: metric });
+    return c.json({ success: true, data: metric });
   } catch (error) {
     console.error("Get Today Metric Error:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch today's metrics" });
+    return c.json({ success: false, message: "Failed to fetch today's metrics" }, 500);
   }
 };
 

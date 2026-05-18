@@ -1,42 +1,41 @@
-import { Request, Response, NextFunction, ErrorRequestHandler } from "express";
+import { Context } from "hono";
 import { ZodError } from "zod";
 
-export const errorHandler: ErrorRequestHandler = (
-  err: any,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
+export const errorHandler = (err: Error, c: Context): Response => {
   if (process.env.NODE_ENV !== "production") {
-    console.error("Path:", req.path);
+    console.error("Path:", c.req.path);
     console.error("Error:", err);
   }
 
-  // Handle Zod Validation Errors
   if (err instanceof ZodError) {
-    res.status(400).json({
-      success: false,
-      message: "Validation Error",
-      errors: err.issues,
-    });
-    return;
+    return c.json(
+      {
+        success: false,
+        message: "Validation Error",
+        errors: err.issues,
+      },
+      400
+    );
   }
 
-  // Handle syntax errors (malformed JSON)
-  if (err instanceof SyntaxError && "body" in err) {
-    res.status(400).json({
-      success: false,
-      message: "Invalid format. Expected JSON.",
-    });
-    return;
+  if (err instanceof SyntaxError) {
+    return c.json(
+      {
+        success: false,
+        message: "Invalid format. Expected JSON.",
+      },
+      400
+    );
   }
 
-  const statusCode = err.statusCode || 500;
   const message = err.message || "Internal Server Error";
 
-  res.status(statusCode).json({
-    success: false,
-    message,
-    ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
-  });
+  return c.json(
+    {
+      success: false,
+      message,
+      ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
+    },
+    500
+  );
 };

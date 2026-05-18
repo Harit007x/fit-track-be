@@ -1,60 +1,54 @@
-import { Request, Response, NextFunction } from "express";
+import { Context, Next } from "hono";
+import { getCookie } from "hono/cookie";
 import jwt from "jsonwebtoken";
-import { prisma } from "../utils/db";
+import { getPrisma, Env } from "../utils/db";
 
 interface JwtPayload {
   id: string;
 }
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: any;
-    }
-  }
-}
-
-export const protect = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const protect = async (c: Context<{ Bindings: Env; Variables: { user: any } }>, next: Next): Promise<Response | void> => {
   let token;
 
-  if (req.cookies.accessToken) {
-    token = req.cookies.accessToken;
-  } else if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
-    token = req.headers.authorization.split(" ")[1];
+  const accessTokenCookie = getCookie(c, "accessToken");
+  if (accessTokenCookie) {
+    token = accessTokenCookie;
+  } else {
+    const authHeader = c.req.header("authorization");
+    if (authHeader && authHeader.startsWith("Bearer")) {
+      token = authHeader.split(" ")[1];
+    }
   }
 
   if (!token) {
-    res.status(401).json({ success: false, message: "Not authorized to access this route" });
-    return;
+    return c.json({ success: false, message: "Not authorized to access this route" }, 401);
   }
 
   try {
-    // Check if token is blacklisted
+    const prisma = getPrisma(c.env);
+
     const isBlacklisted = await prisma.blacklistedToken.findUnique({
       where: { token },
     });
 
     if (isBlacklisted) {
-      res.status(401).json({ success: false, message: "Token has been revoked" });
-      return;
+      return c.json({ success: false, message: "Token has been revoked" }, 401);
     }
 
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "default_secret") as JwtPayload;
+    const decoded = jwt.verify(token, c.env.JWT_SECRET || "default_secret") as JwtPayload;
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
-      select: { id: true, name: true, email: true }, // Don't return password
+      select: { id: true, name: true, email: true },
     });
 
     if (!user) {
-      res.status(401).json({ success: false, message: "User belonging to this token no longer exists" });
-      return;
+      return c.json({ success: false, message: "User belonging to this token no longer exists" }, 401);
     }
 
-    req.user = user;
-    next();
+    c.set("user", user);
+    await next();
   } catch (error) {
-    res.status(401).json({ success: false, message: "Not authorized to access this route" });
+    return c.json({ success: false, message: "Not authorized to access this route" }, 401);
   }
 };

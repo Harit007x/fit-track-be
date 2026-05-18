@@ -1,27 +1,28 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
-  provider = "mongodb"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 model User {
-  id                  String   @id @map("_id") @default(auto()) @db.ObjectId
+  id                  String         @id @default(uuid())
   name                String
-  email               String   @unique
+  email               String         @unique
   password            String
   resetPasswordToken  String?
   resetPasswordExpire DateTime?
-  createdAt           DateTime @default(now())
+  createdAt           DateTime       @default(now())
   refreshTokens       RefreshToken[]
   dailyMetrics        DailyMetric[]
 }
 
 model DailyMetric {
-  id           String   @id @map("_id") @default(auto()) @db.ObjectId
-  userId       String   @db.ObjectId
+  id           String   @id @default(uuid())
+  userId       String
   date         String   // YYYY-MM-DD
   calories     Int      @default(0)
   protein      Int      @default(0)
@@ -36,16 +37,16 @@ model DailyMetric {
 }
 
 model RefreshToken {
-  id        String   @id @map("_id") @default(auto()) @db.ObjectId
+  id        String   @id @default(uuid())
   token     String   @unique
-  userId    String   @db.ObjectId
+  userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
 }
 
 model BlacklistedToken {
-  id        String   @id @map("_id") @default(auto()) @db.ObjectId
+  id        String   @id @default(uuid())
   token     String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())

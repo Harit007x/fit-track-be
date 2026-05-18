@@ -1,12 +1,12 @@
-import { Request, Response } from "express";
+import { Context } from "hono";
+import { getCookie } from "hono/cookie";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
-import { prisma } from "../utils/db";
+import { getPrisma, Env } from "../utils/db";
 import { generateAccessToken, generateRefreshToken, setAuthCookies, clearAuthCookies } from "../utils/auth";
 import jwt from "jsonwebtoken";
 
-// Zod Schemas
 export const signupSchema = z.object({
   body: z.object({
     name: z.string().min(2, "Name must be at least 2 characters"),
@@ -38,15 +38,14 @@ export const resetPasswordSchema = z.object({
   }),
 });
 
-// Controllers
-const signup = async (req: Request, res: Response): Promise<void> => {
+const signup = async (c: Context<{ Bindings: Env }>) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password } = await c.req.json();
+    const prisma = getPrisma(c.env);
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      res.status(400).json({ success: false, message: "User already exists" });
-      return;
+      return c.json({ success: false, message: "User already exists" }, 400);
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -56,93 +55,97 @@ const signup = async (req: Request, res: Response): Promise<void> => {
       data: { name, email, password: hashedPassword },
     });
 
-    const accessToken = generateAccessToken(user.id);
-    const refreshToken = generateRefreshToken(user.id);
+    const accessToken = generateAccessToken(user.id, c.env);
+    const refreshToken = generateRefreshToken(user.id, c.env);
 
-    // Save refresh token to db
     await prisma.refreshToken.create({
       data: {
         token: refreshToken,
         userId: user.id,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
     });
 
-    setAuthCookies(res, accessToken, refreshToken);
+    setAuthCookies(c, accessToken, refreshToken);
 
-    res.status(201).json({
+    return c.json(
+      {
+        success: true,
+        data: { id: user.id, name: user.name, email: user.email },
+        accessToken,
+      },
+      201
+    );
+  } catch (error) {
+    console.error("Signup Error:", error);
+    return c.json({ success: false, message: "Internal server error during signup" }, 500);
+  }
+};
+
+const login = async (c: Context<{ Bindings: Env }>) => {
+  try {
+    const { email, password, rememberMe } = await c.req.json();
+    const prisma = getPrisma(c.env);
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return c.json({ success: false, message: "Invalid credentials" }, 401);
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return c.json({ success: false, message: "Invalid credentials" }, 401);
+    }
+
+    const accessToken = generateAccessToken(user.id, c.env);
+    const refreshToken = generateRefreshToken(user.id, c.env);
+
+    await prisma.refreshToken.create({
+      data: {
+        token: refreshToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    setAuthCookies(c, accessToken, refreshToken, rememberMe);
+
+    return c.json({
       success: true,
       data: { id: user.id, name: user.name, email: user.email },
       accessToken,
     });
   } catch (error) {
-    console.error("Signup Error:", error);
-    res.status(500).json({ success: false, message: "Internal server error during signup" });
+    console.error("Login Error:", error);
+    return c.json({ success: false, message: "Internal server error during login" }, 500);
   }
 };
 
-const login = async (req: Request, res: Response): Promise<void> => {
-  const { email, password, rememberMe } = req.body;
-
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    res.status(401).json({ success: false, message: "Invalid credentials" });
-    return;
-  }
-
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) {
-    res.status(401).json({ success: false, message: "Invalid credentials" });
-    return;
-  }
-
-  const accessToken = generateAccessToken(user.id);
-  const refreshToken = generateRefreshToken(user.id);
-
-  await prisma.refreshToken.create({
-    data: {
-      token: refreshToken,
-      userId: user.id,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  setAuthCookies(res, accessToken, refreshToken, rememberMe);
-
-  res.status(200).json({
-    success: true,
-    data: { id: user.id, name: user.name, email: user.email },
-    accessToken,
-  });
-};
-
-const refresh = async (req: Request, res: Response): Promise<void> => {
-  const incomingRefreshToken = req.cookies.refreshToken;
+const refresh = async (c: Context<{ Bindings: Env }>) => {
+  const incomingRefreshToken = getCookie(c, "refreshToken");
 
   if (!incomingRefreshToken) {
-    res.status(401).json({ success: false, message: "Refresh token not found" });
-    return;
+    return c.json({ success: false, message: "Refresh token not found" }, 401);
   }
 
   try {
     const decoded = jwt.verify(
       incomingRefreshToken,
-      process.env.JWT_REFRESH_SECRET || "default_refresh_secret"
+      c.env.JWT_REFRESH_SECRET || "default_refresh_secret"
     ) as { id: string };
 
+    const prisma = getPrisma(c.env);
     const storedToken = await prisma.refreshToken.findUnique({
       where: { token: incomingRefreshToken },
     });
 
     if (!storedToken) {
-      res.status(401).json({ success: false, message: "Invalid refresh token" });
-      return;
+      return c.json({ success: false, message: "Invalid refresh token" }, 401);
     }
 
-    const newAccessToken = generateAccessToken(decoded.id);
-    const newRefreshToken = generateRefreshToken(decoded.id);
+    const newAccessToken = generateAccessToken(decoded.id, c.env);
+    const newRefreshToken = generateRefreshToken(decoded.id, c.env);
 
-    // Rotate refresh token
     await prisma.refreshToken.delete({ where: { id: storedToken.id } });
     await prisma.refreshToken.create({
       data: {
@@ -152,112 +155,123 @@ const refresh = async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    setAuthCookies(res, newAccessToken, newRefreshToken);
+    setAuthCookies(c, newAccessToken, newRefreshToken);
 
-    res.status(200).json({ success: true, accessToken: newAccessToken });
+    return c.json({ success: true, accessToken: newAccessToken });
   } catch (error) {
-    res.status(401).json({ success: false, message: "Invalid refresh token" });
+    return c.json({ success: false, message: "Invalid refresh token" }, 401);
   }
 };
 
-const logout = async (req: Request, res: Response): Promise<void> => {
-  const refreshToken = req.cookies.refreshToken;
-  let accessToken = req.cookies.accessToken;
+const logout = async (c: Context<{ Bindings: Env }>) => {
+  try {
+    const refreshToken = getCookie(c, "refreshToken");
+    let accessToken = getCookie(c, "accessToken");
 
-  if (!accessToken && req.headers.authorization?.startsWith("Bearer")) {
-    accessToken = req.headers.authorization.split(" ")[1];
-  }
-
-  if (refreshToken) {
-    await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
-  }
-
-  if (accessToken) {
-    try {
-      const decoded = jwt.decode(accessToken) as jwt.JwtPayload;
-      if (decoded && decoded.exp) {
-        await prisma.blacklistedToken.create({
-          data: {
-            token: accessToken,
-            expiresAt: new Date(decoded.exp * 1000),
-          },
-        });
-      }
-    } catch (e) {
-      // Ignored
+    if (!accessToken && c.req.header("authorization")?.startsWith("Bearer")) {
+      accessToken = c.req.header("authorization")?.split(" ")[1];
     }
-  }
 
-  clearAuthCookies(res);
-  res.status(200).json({ success: true, message: "Logged out" });
+    const prisma = getPrisma(c.env);
+
+    if (refreshToken) {
+      await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
+    }
+
+    if (accessToken) {
+      try {
+        const decoded = jwt.decode(accessToken) as jwt.JwtPayload;
+        if (decoded && decoded.exp) {
+          await prisma.blacklistedToken.create({
+            data: {
+              token: accessToken,
+              expiresAt: new Date(decoded.exp * 1000),
+            },
+          });
+        }
+      } catch (e) {
+        // Ignored
+      }
+    }
+
+    clearAuthCookies(c);
+    return c.json({ success: true, message: "Logged out" });
+  } catch (error) {
+    return c.json({ success: false, message: "Internal server error during logout" }, 500);
+  }
 };
 
-const forgotPassword = async (req: Request, res: Response): Promise<void> => {
-  const { email } = req.body;
+const forgotPassword = async (c: Context<{ Bindings: Env }>) => {
+  try {
+    const { email } = await c.req.json();
+    const prisma = getPrisma(c.env);
 
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    res.status(404).json({ success: false, message: "User not found" });
-    return;
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return c.json({ success: false, message: "User not found" }, 404);
+    }
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
+
+    await prisma.user.update({
+      where: { email },
+      data: {
+        resetPasswordToken: hashedToken,
+        resetPasswordExpire: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+
+    const resetUrl = `${c.env.FRONTEND_URL || "http://localhost:5173"}/reset-password/${resetToken}`;
+    console.log(`[Email Mock] Password reset URL for ${user.email}: \n${resetUrl}`);
+
+    return c.json({
+      success: true,
+      message: "Password reset link generated. Check console.",
+      ...(process.env.NODE_ENV !== "production" && { resetUrl }),
+    });
+  } catch (error) {
+    return c.json({ success: false, message: "Internal server error" }, 500);
   }
-
-  const resetToken = crypto.randomBytes(32).toString("hex");
-  const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
-
-  await prisma.user.update({
-    where: { email },
-    data: {
-      resetPasswordToken: hashedToken,
-      resetPasswordExpire: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-    },
-  });
-
-  // Since we don't have an email provider, we will log it to the console
-  // and send it in the dev response for easier testing
-  const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
-  console.log(`[Email Mock] Password reset URL for ${user.email}: \n${resetUrl}`);
-
-  res.status(200).json({
-    success: true,
-    message: "Password reset link generated. Check console.",
-    ...(process.env.NODE_ENV !== "production" && { resetUrl }),
-  });
 };
 
-const resetPassword = async (req: Request, res: Response): Promise<void> => {
-  const { resetToken } = req.params;
-  const { password } = req.body;
+const resetPassword = async (c: Context<{ Bindings: Env }>) => {
+  try {
+    const resetToken = c.req.param("resetToken");
+    const { password } = await c.req.json();
+    const prisma = getPrisma(c.env);
 
-  const hashedToken = crypto.createHash("sha256").update(String(resetToken)).digest("hex");
+    const hashedToken = crypto.createHash("sha256").update(String(resetToken)).digest("hex");
 
-  const user = await prisma.user.findFirst({
-    where: {
-      resetPasswordToken: hashedToken,
-      resetPasswordExpire: { gt: new Date() },
-    },
-  });
+    const user = await prisma.user.findFirst({
+      where: {
+        resetPasswordToken: hashedToken,
+        resetPasswordExpire: { gt: new Date() },
+      },
+    });
 
-  if (!user) {
-    res.status(400).json({ success: false, message: "Invalid or expired token" });
-    return;
+    if (!user) {
+      return c.json({ success: false, message: "Invalid or expired token" }, 400);
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpire: null,
+      },
+    });
+
+    await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+
+    return c.json({ success: true, message: "Password reset successfully" });
+  } catch (error) {
+    return c.json({ success: false, message: "Internal server error" }, 500);
   }
-
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(password, salt);
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      password: hashedPassword,
-      resetPasswordToken: null,
-      resetPasswordExpire: null,
-    },
-  });
-
-  // Optional: clear refresh tokens so other devices logged out
-  await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
-
-  res.status(200).json({ success: true, message: "Password reset successfully" });
 };
 
 export const authController = {
