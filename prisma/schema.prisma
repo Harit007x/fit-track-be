@@ -16,6 +16,23 @@ model User {
   resetPasswordExpire DateTime?
   createdAt           DateTime @default(now())
   refreshTokens       RefreshToken[]
+  dailyMetrics        DailyMetric[]
+}
+
+model DailyMetric {
+  id           String   @id @map("_id") @default(auto()) @db.ObjectId
+  userId       String   @db.ObjectId
+  date         String   // YYYY-MM-DD
+  calories     Int      @default(0)
+  protein      Int      @default(0)
+  waterGlasses Int      @default(0)
+  steps        Int      @default(0)
+  distanceKm   Float    @default(0)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, date])
 }
 
 model RefreshToken {

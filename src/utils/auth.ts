@@ -3,7 +3,7 @@ import { Response } from "express";
 
 export const generateAccessToken = (userId: string): string => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET || "default_secret", {
-    expiresIn: "15m",
+    expiresIn: "12h",
   });
 };
 
@@ -22,7 +22,7 @@ export const setAuthCookies = (res: Response, accessToken: string, refreshToken:
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
-    maxAge: 15 * 60 * 1000, // 15 minutes
+    maxAge: 12 * 60 * 60 * 1000, // 12 hours
   });
 
   const refreshTokenOptions: any = {
