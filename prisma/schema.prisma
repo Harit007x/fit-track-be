@@ -17,17 +17,53 @@ model User {
   createdAt           DateTime @default(now())
   refreshTokens       RefreshToken[]
   dailyMetrics        DailyMetric[]
+  bodyProfile         BodyProfile?
+}
+
+model BodyProfile {
+  id              String    @id @map("_id") @default(auto()) @db.ObjectId
+  userId          String    @unique @db.ObjectId
+
+  // Core body metrics
+  gender          String    // "male" | "female"
+  age             Int
+  heightCm        Float
+  weightKg        Float
+
+  // Optional composition / measurements (cm)
+  bodyFatPct      Float?
+  neckCm          Float?
+  chestCm         Float?
+  waistCm         Float?
+  hipsCm          Float?
+  bicepsCm        Float?
+  thighCm         Float?
+
+  // Lifestyle & diet preferences
+  activityLevel   String    @default("moderate") // sedentary|light|moderate|active|athlete
+  goal            String    @default("maintain") // cut|maintain|bulk
+  dietType        String    @default("non-veg")  // veg|non-veg|vegan|eggetarian
+  foodStyle       String?   @default("accessible") // accessible|balanced|gourmet
+  allergies       String?                        // free text, comma separated
+
+  // Latest AI-generated diet plan (structured JSON) + metadata
+  dietPlan        Json?
+  planGeneratedAt DateTime?
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
 model DailyMetric {
   id           String   @id @map("_id") @default(auto()) @db.ObjectId
   userId       String   @db.ObjectId
   date         String   // YYYY-MM-DD
-  calories     Int      @default(0)
-  protein      Int      @default(0)
+  calories       Int    @default(0)
+  caloriesBurned Int    @default(0)
+  protein        Int    @default(0)
   waterGlasses Int      @default(0)
   steps        Int      @default(0)
-  distanceKm   Float    @default(0)
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

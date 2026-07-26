@@ -38,10 +38,10 @@ metricRouter.get("/today", getTodayMetric);
  *             properties:
  *               date: { type: string, example: "2026-05-11" }
  *               calories: { type: number }
+ *               caloriesBurned: { type: number }
  *               protein: { type: number }
  *               waterGlasses: { type: number }
  *               steps: { type: number }
- *               distanceKm: { type: number }
  *     responses:
  *       200:
  *         description: Success

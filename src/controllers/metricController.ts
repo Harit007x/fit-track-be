@@ -7,10 +7,10 @@ export const upsertMetricSchema = z.object({
   body: z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
     calories: z.number().nonnegative().optional(),
+    caloriesBurned: z.number().nonnegative().optional(),
     protein: z.number().nonnegative().optional(),
     waterGlasses: z.number().nonnegative().optional(),
     steps: z.number().nonnegative().optional(),
-    distanceKm: z.number().nonnegative().optional(),
   }),
 });
 
